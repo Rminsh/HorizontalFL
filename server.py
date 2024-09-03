@@ -7,9 +7,9 @@ import numpy as np
 strategy = fl.server.strategy.FedAvg(
     fraction_fit=1,  # Sample 50% of available clients for training
     fraction_evaluate=1,  # Sample 50% of available clients for evaluation
-    min_fit_clients=1,  # Minimum number of clients to be sampled for training
-    min_evaluate_clients=1,  # Minimum number of clients to be sampled for evaluation
-    min_available_clients=1,  # Minimum number of clients that need to be connected
+    min_fit_clients=2,  # Minimum number of clients to be sampled for training
+    min_evaluate_clients=2,  # Minimum number of clients to be sampled for evaluation
+    min_available_clients=2,  # Minimum number of clients that need to be connected
 )
 
 # Define the Server Config

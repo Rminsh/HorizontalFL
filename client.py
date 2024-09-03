@@ -16,12 +16,59 @@ class FlowerClient(fl.client.NumPyClient):
         self.X_test = X_test
         self.y_train = y_train
         self.y_test = y_test
+        
+        # Explicit mappings for parameters
+        self.criterion_map = {0: 'friedman_mse', 1: 'squared_error'}
+        self.loss_map = {0: 'squared_error'}  # Add other losses if needed
 
     def get_parameters(self, config):
-        return self.model.get_params()
+        params = self.model.get_params()
+        serialized_params = []
+        
+        for key, val in params.items():
+            if key == 'criterion':
+                serialized_params.append(np.array([list(self.criterion_map.values()).index(val)], dtype=np.int32))
+            elif key == 'loss':
+                serialized_params.append(np.array([list(self.loss_map.values()).index(val)], dtype=np.int32))
+            elif isinstance(val, (int, float)):
+                serialized_params.append(np.array([val], dtype=np.float32))
+            elif isinstance(val, str):
+                serialized_params.append(np.array([0], dtype=np.int32))  # Placeholder for unknown string
+            else:
+                serialized_params.append(np.array([0.0], dtype=np.float32))
+        
+        return serialized_params
 
     def set_parameters(self, parameters):
-        param_dict = dict(zip(self.model.get_params().keys(), parameters))
+        param_keys = self.model.get_params().keys()
+        param_dict = {}
+
+        for key, val in zip(param_keys, parameters):
+            if key == 'criterion':
+                param_dict[key] = self.criterion_map.get(int(val[0]), 'unknown')
+            elif key == 'loss':
+                param_dict[key] = self.loss_map.get(int(val[0]), 'unknown')
+            elif key == 'init':
+                param_dict[key] = None if val[0] == 0.0 else val[0]
+            elif key == 'max_features':
+                param_dict[key] = None if val[0] == 0.0 else val[0]
+            elif key == 'max_leaf_nodes':
+                param_dict[key] = None if val[0] == 0.0 else int(val[0])
+            elif key == 'n_iter_no_change':
+                param_dict[key] = None if val[0] == 0.0 else int(val[0])
+            elif key == 'verbose':
+                param_dict[key] = int(val[0]) if isinstance(val[0], (float, np.float32)) else val[0]
+            elif key == 'warm_start':
+                param_dict[key] = bool(val[0]) if isinstance(val[0], (float, np.float32)) else val[0]
+            elif key in ['max_depth', 'n_estimators', 'min_samples_split', 'min_samples_leaf', 'random_state']:
+                param_dict[key] = int(val[0])
+            elif isinstance(val[0], (np.float32, float, int)):
+                param_dict[key] = float(val[0])
+            else:
+                param_dict[key] = val[0]
+
+            print(f"Set parameter {key} to {param_dict[key]} (type: {type(param_dict[key])})")
+
         self.model.set_params(**param_dict)
 
     def fit(self, parameters, config):
@@ -61,4 +108,4 @@ model = GradientBoostingRegressor()
 client = FlowerClient(model, X_train, X_test, y_train, y_test)
 
 # Start the Flower client
-fl.client.start_client(server_address="0.0.0.0:8080", client=client)
+fl.client.start_client(server_address="0.0.0.0:8080", client=client.to_client())
