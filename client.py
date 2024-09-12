@@ -78,10 +78,12 @@ class FlowerClient(fl.client.NumPyClient):
 
     def fit(self, parameters, config):
         self.set_parameters(parameters)
-        # print(f"Starting training with parameters: {self.model.get_params()}")  # Debugging
+        # Increment n_estimators to allow the model to continue learning
+        new_estimators = self.model.get_params()['n_estimators'] + 100
+        self.model.set_params(n_estimators=new_estimators)
+        
         self.model.fit(self.X_train, self.y_train)
         updated_params = self.get_parameters(config={})
-        # print(f"Updated parameters after training: {updated_params}")  # Debugging
         return updated_params, len(self.X_train), {}
 
     def evaluate(self, parameters, config):
@@ -94,6 +96,7 @@ class FlowerClient(fl.client.NumPyClient):
 
 # Function to load partitioned data for each client
 def load_data_for_client(client_id, num_clients):
+    
     # Load the full dataset
     data = pd.read_csv("merged_output.csv")
     data = data.drop(columns=['timestamp'])
@@ -118,11 +121,12 @@ def load_data_for_client(client_id, num_clients):
     scaler = RobustScaler()
     X_train = scaler.fit_transform(X_train)
     X_test = scaler.transform(X_test)
-    
+    print(f"Client {client_id} - Data shape: {X_client.shape}")
     return X_train, X_test, y_train, y_test
 
 # Initialize the model
 model = GradientBoostingRegressor(
+    warm_start=True
     # n_estimators=200,
     # max_depth=7,
     # learning_rate=0.1,
