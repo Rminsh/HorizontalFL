@@ -27,7 +27,7 @@ strategy = fl.server.strategy.FedAvg(
 )
 
 # Define the Server Config
-config = fl.server.ServerConfig(num_rounds=10)
+config = fl.server.ServerConfig(num_rounds=50)
 
 # Start Flower server
 hist = fl.server.start_server(

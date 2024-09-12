@@ -78,10 +78,12 @@ class FlowerClient(fl.client.NumPyClient):
 
     def fit(self, parameters, config):
         self.set_parameters(parameters)
-        # Increment n_estimators to allow the model to continue learning
-        new_estimators = self.model.get_params()['n_estimators'] + 100
-        self.model.set_params(n_estimators=new_estimators)
+        # Incrementally increase n_estimators
+        additional_estimators = 10  # Add 10 more estimators each round
+        self.model.set_params(n_estimators=self.model.get_params()["n_estimators"] + additional_estimators)
         
+        print(f"Training with {self.model.get_params()['n_estimators']} estimators")
+
         self.model.fit(self.X_train, self.y_train)
         updated_params = self.get_parameters(config={})
         return updated_params, len(self.X_train), {}
@@ -126,10 +128,13 @@ def load_data_for_client(client_id, num_clients):
 
 # Initialize the model
 model = GradientBoostingRegressor(
-    warm_start=True
-    # n_estimators=200,
-    # max_depth=7,
-    # learning_rate=0.1,
+    n_estimators=100,   # Starting estimators
+    learning_rate=0.01, # Lower learning rate for gradual improvement
+    max_depth=5,        # Allow deeper trees
+    min_samples_split=10,  # Regularization
+    min_samples_leaf=4,    # Larger leaf size for better generalization
+    subsample=0.8,      # Subsample for stochastic gradient boosting
+    warm_start=True     # Enable warm start to add trees incrementally
     # verbose=1
 ) # Increasing Model Complexity
 
