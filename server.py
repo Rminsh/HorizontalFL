@@ -21,6 +21,14 @@ class CustomFedAvg(fl.server.strategy.FedAvg):
         super().__init__(**kwargs)
         self.loss_history = []
         self.metrics_history = []
+        self.fit_metrics_history = []
+
+    def aggregate_fit(self, rnd, results, failures):
+        aggregated_parameters, aggregated_fit_metrics = super().aggregate_fit(rnd, results, failures)
+        if aggregated_fit_metrics:
+            self.fit_metrics_history.append(aggregated_fit_metrics)
+            print(f"Round {rnd} - Aggregated fit metrics: {aggregated_fit_metrics}")
+        return aggregated_parameters, aggregated_fit_metrics
 
     def aggregate_evaluate(self, rnd, results, failures):
         if failures:
@@ -64,7 +72,7 @@ if __name__ == "__main__":
     plt.xlabel('Round')
     plt.ylabel('Loss (MSE)')
     plt.grid(True)
-    plt.savefig('loss_over_rounds.png')
+    plt.savefig('results/loss_over_rounds.png')
     plt.show()
 
     # If metrics like MAE and R² are available
@@ -76,7 +84,7 @@ if __name__ == "__main__":
         plt.xlabel('Round')
         plt.ylabel('Mean Absolute Error')
         plt.grid(True)
-        plt.savefig('mae_over_rounds.png')
+        plt.savefig('results/mae_over_rounds.png')
         plt.show()
 
     if strategy.metrics_history and 'r2' in strategy.metrics_history[0]:
@@ -87,5 +95,27 @@ if __name__ == "__main__":
         plt.xlabel('Round')
         plt.ylabel('R² Score')
         plt.grid(True)
-        plt.savefig('r2_over_rounds.png')
+        plt.savefig('results/r2_over_rounds.png')
+        plt.show()
+
+    if strategy.fit_metrics_history and 'val_mse' in strategy.fit_metrics_history[0]:
+        val_mse_history = [m['val_mse'] for m in strategy.fit_metrics_history]
+        plt.figure(figsize=(10, 5))
+        plt.plot(rounds, val_mse_history, marker='o', color='purple')
+        plt.title('Global Model Validation MSE over Rounds')
+        plt.xlabel('Round')
+        plt.ylabel('Validation MSE')
+        plt.grid(True)
+        plt.savefig('results/val_mse_over_rounds.png')
+        plt.show()
+
+    if strategy.fit_metrics_history and 'val_accuracy' in strategy.fit_metrics_history[0]:
+        val_accuracy_history = [m['val_accuracy'] for m in strategy.fit_metrics_history]
+        plt.figure(figsize=(10, 5))
+        plt.plot(rounds, val_accuracy_history, marker='o', color='brown')
+        plt.title('Global Model Validation Accuracy over Rounds')
+        plt.xlabel('Round')
+        plt.ylabel('Validation Accuracy')
+        plt.grid(True)
+        plt.savefig('results/val_accuracy_over_rounds.png')
         plt.show()

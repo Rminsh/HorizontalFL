@@ -79,8 +79,43 @@ class FlowerClient(fl.client.NumPyClient):
             val_loss = self.evaluate_local(self.val_loader)
             self.scheduler.step()
             print(f"Client {self.client_id} - Epoch {epoch+1}/{epochs} - Training loss: {avg_epoch_loss:.4f}, Validation loss: {val_loss:.4f}")
+        
+        # After training, compute validation metrics
+        val_mse, val_mae, val_r2, val_accuracy = self.evaluate_metrics(self.val_loader)
         # Return the updated model parameters
-        return self.get_parameters(config={}), len(self.train_loader.dataset), {}
+        return self.get_parameters(config={}), len(self.train_loader.dataset), {
+            "val_mse": val_mse,
+            "val_mae": val_mae,
+            "val_r2": val_r2,
+            "val_accuracy": val_accuracy
+        }
+
+    def evaluate_metrics(self, data_loader):
+        self.model.eval()
+        total_loss = 0.0
+        all_outputs = []
+        all_targets = []
+        with torch.no_grad():
+            for batch_x, batch_y in data_loader:
+                batch_x, batch_y = batch_x.to(self.device), batch_y.to(self.device)
+                outputs = self.model(batch_x)
+                loss = self.criterion(outputs, batch_y)
+                total_loss += loss.item() * batch_x.size(0)
+                all_outputs.extend(outputs.cpu().numpy().flatten())
+                all_targets.extend(batch_y.cpu().numpy().flatten())
+        mse = total_loss / len(data_loader.dataset)
+        mae = mean_absolute_error(all_targets, all_outputs)
+        r2 = r2_score(all_targets, all_outputs)
+        # Custom accuracy: percentage of predictions within a threshold
+        threshold = 0.1  # Define your threshold
+        correct_predictions = np.abs(np.array(all_outputs) - np.array(all_targets)) <= threshold
+        accuracy = np.mean(correct_predictions)
+        # Convert metrics to standard Python float
+        mse = float(mse)
+        mae = float(mae)
+        r2 = float(r2)
+        accuracy = float(accuracy)
+        return mse, mae, r2, accuracy
     
     def evaluate(self, parameters, config):
         self.set_parameters(parameters)
@@ -99,12 +134,22 @@ class FlowerClient(fl.client.NumPyClient):
         mse = total_loss / len(self.test_loader.dataset)
         mae = mean_absolute_error(all_targets, all_outputs)
         r2 = r2_score(all_targets, all_outputs)
+        # Custom accuracy
+        threshold = 0.1
+        correct_predictions = np.abs(np.array(all_outputs) - np.array(all_targets)) <= threshold
+        accuracy = np.mean(correct_predictions)
         # Convert metrics to standard Python float
         mse = float(mse)
         mae = float(mae)
         r2 = float(r2)
-        print(f"Client {self.client_id} - Evaluation loss: {mse:.4f}, MAE: {mae:.4f}, R2: {r2:.4f}")
-        return mse, len(self.test_loader.dataset), {"mse": mse, "mae": mae, "r2": r2}
+        accuracy = float(accuracy)
+        print(f"Client {self.client_id} - Evaluation loss: {mse:.4f}, MAE: {mae:.4f}, R2: {r2:.4f}, Accuracy: {accuracy:.4f}")
+        return mse, len(self.test_loader.dataset), {
+            "mse": mse,
+            "mae": mae,
+            "r2": r2,
+            "accuracy": accuracy
+        }
     
     def evaluate_local(self, data_loader):
         self.model.eval()
