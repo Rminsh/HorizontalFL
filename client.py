@@ -24,7 +24,7 @@ def set_random_seeds(seed_value=42):
         torch.backends.cudnn.deterministic = True
         torch.backends.cudnn.benchmark = False
 
-# Define the MLP model using PyTorch
+# MLP model
 class MLP(nn.Module):
     def __init__(self, input_size):
         super(MLP, self).__init__()
@@ -39,6 +39,16 @@ class MLP(nn.Module):
         x = self.fc3(x)
         return x
 
+# Linear Regression model
+class LinearRegressionModel(nn.Module):
+    def __init__(self, input_size):
+        super(LinearRegressionModel, self).__init__()
+        self.linear = nn.Linear(input_size, 1)
+        
+    def forward(self, x):
+        out = self.linear(x)
+        return out
+
 # Flower client using PyTorch
 class FlowerClient(fl.client.NumPyClient):
     def __init__(self, model, train_loader, val_loader, test_loader, device, client_id):
@@ -49,8 +59,8 @@ class FlowerClient(fl.client.NumPyClient):
         self.device = device
         self.client_id = client_id
         self.criterion = nn.MSELoss()
-        self.optimizer = optim.SGD(model.parameters(), lr=0.01, momentum=0.9)  # Using SGD optimizer
-        self.num_epochs = 20  # Match the original MLP code
+        self.optimizer = optim.SGD(model.parameters(), lr=0.01, momentum=0.9)
+        self.num_epochs = 40
 
     def get_parameters(self, config):
         return [val.cpu().numpy() for _, val in self.model.state_dict().items()]
@@ -213,6 +223,8 @@ if __name__ == "__main__":
 
     # Initialize the model
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    
+    # model = LinearRegressionModel(input_dim).to(device)
     model = MLP(input_dim).to(device)
 
     # Create a Flower client

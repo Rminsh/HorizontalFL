@@ -8,10 +8,11 @@ from client import FlowerClient
 from client import set_random_seeds
 from client import load_data_for_client
 from client import MLP
+from client import LinearRegressionModel
 
 # Server Config
 num_clients = 10 # Total number of clients
-config = fl.server.ServerConfig(num_rounds=20) # Total number of rounds
+config = fl.server.ServerConfig(num_rounds=30) # Total number of rounds
 
 def client_fn(cid: str):
     cid_int = int(cid)
@@ -23,6 +24,7 @@ def client_fn(cid: str):
 
     # Initialize the model
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    # model = LinearRegressionModel(input_dim).to(device)
     model = MLP(input_dim).to(device)
 
     # Create a Flower client
