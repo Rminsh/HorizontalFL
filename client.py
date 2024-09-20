@@ -9,9 +9,9 @@ import torch.optim as optim
 import random
 
 from sklearn.model_selection import train_test_split
-from sklearn.preprocessing import RobustScaler
-from sklearn.metrics import mean_absolute_error, r2_score
-from sklearn.utils import shuffle  # Added missing import
+from sklearn.preprocessing import StandardScaler
+from sklearn.impute import SimpleImputer
+from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_error
 
 # Function to set random seeds for reproducibility
 def set_random_seeds(seed_value=42):
@@ -24,19 +24,19 @@ def set_random_seeds(seed_value=42):
         torch.backends.cudnn.deterministic = True
         torch.backends.cudnn.benchmark = False
 
-# Define the Simplified Neural Network model using PyTorch
-class SimplifiedNeuralNetworkModel(nn.Module):
-    def __init__(self, input_dim):
-        super(SimplifiedNeuralNetworkModel, self).__init__()
-        self.fc1 = nn.Linear(input_dim, 64)
-        self.bn1 = nn.BatchNorm1d(64)
-        self.relu1 = nn.ReLU()
-        self.dropout1 = nn.Dropout(p=0.5)
-        self.fc2 = nn.Linear(64, 1)
-    
+# Define the MLP model using PyTorch
+class MLP(nn.Module):
+    def __init__(self, input_size):
+        super(MLP, self).__init__()
+        self.fc1 = nn.Linear(input_size, 64)
+        self.fc2 = nn.Linear(64, 64)
+        self.fc3 = nn.Linear(64, 1)
+        self.relu = nn.ReLU()
+        
     def forward(self, x):
-        x = self.dropout1(self.relu1(self.bn1(self.fc1(x))))
-        x = self.fc2(x)
+        x = self.relu(self.fc1(x))
+        x = self.relu(self.fc2(x))
+        x = self.fc3(x)
         return x
 
 # Flower client using PyTorch
@@ -49,9 +49,9 @@ class FlowerClient(fl.client.NumPyClient):
         self.device = device
         self.client_id = client_id
         self.criterion = nn.MSELoss()
-        self.optimizer = optim.Adam(self.model.parameters(), lr=0.0001, weight_decay=1e-4)
-        self.scheduler = optim.lr_scheduler.CosineAnnealingLR(self.optimizer, T_max=10)
-    
+        self.optimizer = optim.SGD(model.parameters(), lr=0.01, momentum=0.9)  # Using SGD optimizer
+        self.num_epochs = 20  # Match the original MLP code
+
     def get_parameters(self, config):
         return [val.cpu().numpy() for _, val in self.model.state_dict().items()]
     
@@ -63,8 +63,7 @@ class FlowerClient(fl.client.NumPyClient):
     def fit(self, parameters, config):
         self.set_parameters(parameters)
         self.model.train()
-        epochs = 20
-        for epoch in range(epochs):
+        for epoch in range(self.num_epochs):
             epoch_loss = 0.0
             for batch_x, batch_y in self.train_loader:
                 batch_x, batch_y = batch_x.to(self.device), batch_y.to(self.device)
@@ -72,22 +71,21 @@ class FlowerClient(fl.client.NumPyClient):
                 outputs = self.model(batch_x)
                 loss = self.criterion(outputs, batch_y)
                 loss.backward()
+                # Apply gradient clipping
+                torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
                 self.optimizer.step()
                 epoch_loss += loss.item() * batch_x.size(0)
             avg_epoch_loss = epoch_loss / len(self.train_loader.dataset)
-            # Validation step
-            val_loss = self.evaluate_local(self.val_loader)
-            self.scheduler.step()
-            print(f"Client {self.client_id} - Epoch {epoch+1}/{epochs} - Training loss: {avg_epoch_loss:.4f}, Validation loss: {val_loss:.4f}")
+            if (epoch + 1) % 10 == 0:
+                print(f"Client {self.client_id} - Epoch {epoch+1}/{self.num_epochs} - Training loss: {avg_epoch_loss:.4f}")
         
         # After training, compute validation metrics
-        val_mse, val_mae, val_r2, val_accuracy = self.evaluate_metrics(self.val_loader)
+        val_mse, val_mae, val_r2 = self.evaluate_metrics(self.val_loader)
         # Return the updated model parameters
         return self.get_parameters(config={}), len(self.train_loader.dataset), {
             "val_mse": val_mse,
             "val_mae": val_mae,
-            "val_r2": val_r2,
-            "val_accuracy": val_accuracy
+            "val_r2": val_r2
         }
 
     def evaluate_metrics(self, data_loader):
@@ -106,17 +104,12 @@ class FlowerClient(fl.client.NumPyClient):
         mse = total_loss / len(data_loader.dataset)
         mae = mean_absolute_error(all_targets, all_outputs)
         r2 = r2_score(all_targets, all_outputs)
-        # Custom accuracy: percentage of predictions within a threshold
-        threshold = 0.1  # Define your threshold
-        correct_predictions = np.abs(np.array(all_outputs) - np.array(all_targets)) <= threshold
-        accuracy = np.mean(correct_predictions)
         # Convert metrics to standard Python float
         mse = float(mse)
         mae = float(mae)
         r2 = float(r2)
-        accuracy = float(accuracy)
-        return mse, mae, r2, accuracy
-    
+        return mse, mae, r2
+        
     def evaluate(self, parameters, config):
         self.set_parameters(parameters)
         self.model.eval()
@@ -134,67 +127,46 @@ class FlowerClient(fl.client.NumPyClient):
         mse = total_loss / len(self.test_loader.dataset)
         mae = mean_absolute_error(all_targets, all_outputs)
         r2 = r2_score(all_targets, all_outputs)
-        # Custom accuracy
-        threshold = 0.1
-        correct_predictions = np.abs(np.array(all_outputs) - np.array(all_targets)) <= threshold
-        accuracy = np.mean(correct_predictions)
         # Convert metrics to standard Python float
         mse = float(mse)
         mae = float(mae)
         r2 = float(r2)
-        accuracy = float(accuracy)
-        print(f"Client {self.client_id} - Evaluation loss: {mse:.4f}, MAE: {mae:.4f}, R2: {r2:.4f}, Accuracy: {accuracy:.4f}")
+        print(f"Client {self.client_id} - Evaluation MSE: {mse:.4f}, MAE: {mae:.4f}, R²: {r2:.4f}")
         return mse, len(self.test_loader.dataset), {
             "mse": mse,
             "mae": mae,
-            "r2": r2,
-            "accuracy": accuracy
+            "r2": r2
         }
-    
-    def evaluate_local(self, data_loader):
-        self.model.eval()
-        total_loss = 0.0
-        with torch.no_grad():
-            for batch_x, batch_y in data_loader:
-                batch_x, batch_y = batch_x.to(self.device), batch_y.to(self.device)
-                outputs = self.model(batch_x)
-                loss = self.criterion(outputs, batch_y)
-                total_loss += loss.item() * batch_x.size(0)
-        avg_loss = total_loss / len(data_loader.dataset)
-        return avg_loss
 
 # Function to load partitioned data for each client
 def load_data_for_client(client_id, num_clients):
     # Load the full dataset
     data = pd.read_csv("merged_output.csv")
-    data = data.drop(columns=['timestamp'])
-    data.fillna(data.mean(), inplace=True)
+    data = data.drop(columns=['timestamp', 'sleep_log_entry_id'])
 
-    # Split the dataset into features (X) and target (y)
-    X = data.drop(columns=['overall_score', 'sleep_log_entry_id'])
-    y = data['overall_score']
+    # Impute missing values using SimpleImputer with 'mean' strategy
+    imputer = SimpleImputer(strategy='mean')
+    X = data.drop(columns=['overall_score'])
+    X = imputer.fit_transform(X)
+    y = data['overall_score'].values
 
-    # Normalize the target variable using training data statistics
-    X_train_full, X_temp, y_train_full, y_temp = train_test_split(X, y, test_size=0.2, random_state=42)
-    y_mean = y_train_full.mean()
-    y_std = y_train_full.std()
-    y = (y - y_mean) / y_std
+    # Standardize features using StandardScaler
+    scaler = StandardScaler()
+    X = scaler.fit_transform(X)
 
-    # Combine X and y back into a dataframe for consistent indexing
-    data_normalized = pd.concat([X, y.rename('overall_score')], axis=1)
+    # Combine X and y back into a DataFrame for consistent indexing
+    data_processed = pd.DataFrame(X)
+    data_processed['overall_score'] = y
 
     # Shuffle the data
-    data_normalized = data_normalized.sample(frac=1, random_state=42).reset_index(drop=True)
+    data_processed = data_processed.sample(frac=1, random_state=42).reset_index(drop=True)
 
     # Partition the dataset for the client (IID)
-    client_indices = list(range(client_id, len(data_normalized), num_clients))
-    client_data = data_normalized.iloc[client_indices]
+    client_indices = list(range(client_id, len(data_processed), num_clients))
+    client_data = data_processed.iloc[client_indices]
 
-    X_client = client_data.drop(columns=['overall_score'])
-    y_client = client_data['overall_score']
-
-    # Shuffle client data
-    X_client, y_client = shuffle(X_client, y_client, random_state=42)
+    X_client = client_data.drop(columns=['overall_score']).values
+    y_client = client_data['overall_score'].values
 
     # Split into training, validation, and testing sets for the client
     X_temp, X_test, y_temp, y_test = train_test_split(
@@ -204,31 +176,25 @@ def load_data_for_client(client_id, num_clients):
         X_temp, y_temp, test_size=0.1, random_state=42
     )
 
-    # Scale the features
-    scaler = RobustScaler()
-    X_train = scaler.fit_transform(X_train)
-    X_val = scaler.transform(X_val)
-    X_test = scaler.transform(X_test)
-
     # Convert to PyTorch tensors
     X_train = torch.tensor(X_train, dtype=torch.float32)
-    y_train = torch.tensor(y_train.values, dtype=torch.float32).view(-1, 1)
+    y_train = torch.tensor(y_train, dtype=torch.float32).view(-1, 1)
     X_val = torch.tensor(X_val, dtype=torch.float32)
-    y_val = torch.tensor(y_val.values, dtype=torch.float32).view(-1, 1)
+    y_val = torch.tensor(y_val, dtype=torch.float32).view(-1, 1)
     X_test = torch.tensor(X_test, dtype=torch.float32)
-    y_test = torch.tensor(y_test.values, dtype=torch.float32).view(-1, 1)
+    y_test = torch.tensor(y_test, dtype=torch.float32).view(-1, 1)
 
     # Create DataLoader
     train_dataset = torch.utils.data.TensorDataset(X_train, y_train)
     val_dataset = torch.utils.data.TensorDataset(X_val, y_val)
     test_dataset = torch.utils.data.TensorDataset(X_test, y_test)
 
-    train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=32, shuffle=True)
-    val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=32, shuffle=False)
-    test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=32, shuffle=False)
+    train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=len(train_dataset), shuffle=False)
+    val_loader = torch.utils.data.DataLoader(val_dataset, batch_size=len(val_dataset), shuffle=False)
+    test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=len(test_dataset), shuffle=False)
 
     print(f"Client {client_id} - Training samples: {len(train_dataset)}, Validation samples: {len(val_dataset)}, Test samples: {len(test_dataset)}")
-    return train_loader, val_loader, test_loader, X_train.shape[1], y_mean, y_std
+    return train_loader, val_loader, test_loader, X_train.shape[1]
 
 # Start Flower client with client index and total number of clients
 if __name__ == "__main__":
@@ -243,11 +209,11 @@ if __name__ == "__main__":
     num_clients = 2  # Define the number of clients
 
     # Load partitioned data for this client
-    train_loader, val_loader, test_loader, input_dim, y_mean, y_std = load_data_for_client(client_index, num_clients)
+    train_loader, val_loader, test_loader, input_dim = load_data_for_client(client_index, num_clients)
 
     # Initialize the model
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = SimplifiedNeuralNetworkModel(input_dim).to(device)
+    model = MLP(input_dim).to(device)
 
     # Create a Flower client
     client = FlowerClient(model, train_loader, val_loader, test_loader, device, client_index)

@@ -108,14 +108,3 @@ if __name__ == "__main__":
         plt.grid(True)
         plt.savefig('results/val_mse_over_rounds.png')
         plt.show()
-
-    if strategy.fit_metrics_history and 'val_accuracy' in strategy.fit_metrics_history[0]:
-        val_accuracy_history = [m['val_accuracy'] for m in strategy.fit_metrics_history]
-        plt.figure(figsize=(10, 5))
-        plt.plot(rounds, val_accuracy_history, marker='o', color='brown')
-        plt.title('Global Model Validation Accuracy over Rounds')
-        plt.xlabel('Round')
-        plt.ylabel('Validation Accuracy')
-        plt.grid(True)
-        plt.savefig('results/val_accuracy_over_rounds.png')
-        plt.show()
