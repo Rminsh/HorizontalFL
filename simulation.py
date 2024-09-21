@@ -2,8 +2,7 @@
 import flwr as fl
 import torch
 import matplotlib.pyplot as plt
-from server import weighted_average
-from server import strategy
+from server import weighted_average, CustomFedAvg
 from client import FlowerClient
 from client import set_random_seeds
 from client import load_data_for_client
@@ -11,8 +10,19 @@ from client import MLP
 from client import LinearRegressionModel
 
 # Server Config
-num_clients = 10 # Total number of clients
-config = fl.server.ServerConfig(num_rounds=30) # Total number of rounds
+num_clients = 20  # Total number of clients
+num_rounds = 70
+details = str(num_clients) + 'clients_' + str(num_rounds) + 'rounds_'
+
+strategy = CustomFedAvg(
+    fraction_fit=1.0,  # Sample 100% of available clients for training
+    fraction_evaluate=1.0,  # Sample 100% of available clients for evaluation
+    min_fit_clients=num_clients,  # Minimum number of clients to be sampled for training
+    min_evaluate_clients=num_clients,  # Minimum number of clients to be sampled for evaluation
+    min_available_clients=num_clients,  # Minimum number of clients that need to be connected
+    evaluate_metrics_aggregation_fn=weighted_average,
+    fit_metrics_aggregation_fn=weighted_average,
+)
 
 def client_fn(cid: str):
     cid_int = int(cid)
@@ -35,52 +45,71 @@ if __name__ == "__main__":
     # Start the server
     hist = fl.simulation.start_simulation(
         client_fn=client_fn,
-        num_clients=num_clients,                 
-        config=config,
+        num_clients=num_clients,
+        config=fl.server.ServerConfig(num_rounds=num_rounds),
         strategy=strategy,
     )
 
-    # After training, plot the loss and metrics
-    rounds = range(1, len(strategy.loss_history) + 1)
+    # Define the number of rounds to exclude
+    exclude_rounds = 5  # Number of initial rounds to exclude
+
+    # Ensure there are enough rounds to exclude
+    if len(strategy.loss_history) <= exclude_rounds:
+        raise ValueError(f"Not enough rounds to exclude the first {exclude_rounds} rounds.")
+
+    # Define the rounds and corresponding loss/history excluding the first two rounds
+    rounds = range(exclude_rounds + 1, len(strategy.loss_history) + 1)
+    loss_history = strategy.loss_history[exclude_rounds:]
+    
+    # Plot Loss
     plt.figure(figsize=(10, 5))
-    plt.plot(rounds, strategy.loss_history, marker='o')
+    plt.plot(rounds, loss_history, marker='o', label='Loss (MSE)')
     plt.title('Global Model Loss over Rounds')
     plt.xlabel('Round')
     plt.ylabel('Loss (MSE)')
     plt.grid(True)
-    plt.savefig('results/loss_over_rounds.png')
+    plt.legend()
+    plt.savefig('results/' + details + 'loss_over_rounds.png')
     plt.show()
 
-    # If metrics like MAE and R² are available
-    if strategy.metrics_history and 'mae' in strategy.metrics_history[0]:
-        mae_history = [m['mae'] for m in strategy.metrics_history]
+    # Plot Validation MAE
+    if strategy.fit_metrics_history and 'val_mae' in strategy.fit_metrics_history[0]:
+        mae_history = [m['val_mae'] for m in strategy.fit_metrics_history]
+        mae_history = mae_history[exclude_rounds:]
         plt.figure(figsize=(10, 5))
-        plt.plot(rounds, mae_history, marker='o', color='orange')
-        plt.title('Global Model MAE over Rounds')
+        plt.plot(rounds, mae_history, marker='o', color='orange', label='Validation MAE')
+        plt.title('Global Model Validation MAE over Rounds')
         plt.xlabel('Round')
         plt.ylabel('Mean Absolute Error')
         plt.grid(True)
-        plt.savefig('results/mae_over_rounds.png')
+        plt.legend()
+        plt.savefig('results/' + details + 'mae_over_rounds.png')
         plt.show()
 
-    if strategy.metrics_history and 'r2' in strategy.metrics_history[0]:
-        r2_history = [m['r2'] for m in strategy.metrics_history]
+    # Plot Validation R² Score
+    if strategy.fit_metrics_history and 'val_r2' in strategy.fit_metrics_history[0]:
+        r2_history = [m['val_r2'] for m in strategy.fit_metrics_history]
+        r2_history = r2_history[exclude_rounds:]
         plt.figure(figsize=(10, 5))
-        plt.plot(rounds, r2_history, marker='o', color='green')
-        plt.title('Global Model R² Score over Rounds')
+        plt.plot(rounds, r2_history, marker='o', color='green', label='Validation R² Score')
+        plt.title('Global Model Validation R² Score over Rounds')
         plt.xlabel('Round')
         plt.ylabel('R² Score')
         plt.grid(True)
-        plt.savefig('results/r2_over_rounds.png')
+        plt.legend()
+        plt.savefig('results/' + details + 'r2_over_rounds.png')
         plt.show()
 
-    if strategy.fit_metrics_history and 'val_mse' in strategy.fit_metrics_history[0]:
-        val_mse_history = [m['val_mse'] for m in strategy.fit_metrics_history]
-        plt.figure(figsize=(10, 5))
-        plt.plot(rounds, val_mse_history, marker='o', color='purple')
-        plt.title('Global Model Validation MSE over Rounds')
-        plt.xlabel('Round')
-        plt.ylabel('Validation MSE')
-        plt.grid(True)
-        plt.savefig('results/val_mse_over_rounds.png')
-        plt.show()
+    # # Plot Validation MSE (from fit_metrics_history)
+    # if strategy.fit_metrics_history and 'val_mse' in strategy.fit_metrics_history[0]:
+    #     val_mse_history = [m['val_mse'] for m in strategy.fit_metrics_history]
+    #     val_mse_history = val_mse_history[exclude_rounds:]
+    #     plt.figure(figsize=(10, 5))
+    #     plt.plot(rounds, val_mse_history, marker='o', color='purple', label='Validation MSE')
+    #     plt.title('Global Model Validation MSE over Rounds')
+    #     plt.xlabel('Round')
+    #     plt.ylabel('Validation MSE')
+    #     plt.grid(True)
+    #     plt.legend()
+    #     plt.savefig('results/' + details + 'val_mse_over_rounds.png')
+    #     plt.show()
