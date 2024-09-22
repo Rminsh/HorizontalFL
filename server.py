@@ -1,6 +1,10 @@
 # server.py
 import flwr as fl
 import matplotlib.pyplot as plt
+import os
+
+# Define the tolerance used for accuracy in plots
+TOLERANCE = 0.10  # 10% tolerance
 
 # Custom aggregation function to average metrics across clients
 def weighted_average(metrics):
@@ -22,12 +26,15 @@ class CustomFedAvg(fl.server.strategy.FedAvg):
         self.loss_history = []
         self.metrics_history = []
         self.fit_metrics_history = []
+        self.accuracy_history = []  # New list to store accuracy over rounds
 
     def aggregate_fit(self, rnd, results, failures):
         aggregated_parameters, aggregated_fit_metrics = super().aggregate_fit(rnd, results, failures)
         if aggregated_fit_metrics:
             self.fit_metrics_history.append(aggregated_fit_metrics)
             print(f"Round {rnd} - Aggregated fit metrics: {aggregated_fit_metrics}")
+            if 'val_accuracy' in aggregated_fit_metrics:
+                self.accuracy_history.append(aggregated_fit_metrics['val_accuracy'])
         return aggregated_parameters, aggregated_fit_metrics
 
     def aggregate_evaluate(self, rnd, results, failures):
@@ -41,6 +48,9 @@ class CustomFedAvg(fl.server.strategy.FedAvg):
         print(f"Round {rnd} - Loss: {loss_aggregated:.4f}, Metrics: {metrics_aggregated}")
         return loss_aggregated, metrics_aggregated
 
+# Ensure the 'results' directory exists
+os.makedirs('results', exist_ok=True)
+
 # Instantiate the custom strategy
 strategy = CustomFedAvg(
     fraction_fit=1.0,  # Sample 100% of available clients for training
@@ -53,12 +63,12 @@ strategy = CustomFedAvg(
 )
 
 # Define the Server Config
-config = fl.server.ServerConfig(num_rounds=20)  # Keep number of rounds at 20
+config = fl.server.ServerConfig(num_rounds=20)  # Adjust the number of rounds as needed
 
 # Start Flower server
 if __name__ == "__main__":
     # Start the server
-    hist = fl.server.start_server(
+    fl.server.start_server(
         server_address="0.0.0.0:8080",
         config=config,
         strategy=strategy
@@ -67,44 +77,50 @@ if __name__ == "__main__":
     # After training, plot the loss and metrics
     rounds = range(1, len(strategy.loss_history) + 1)
     plt.figure(figsize=(10, 5))
-    plt.plot(rounds, strategy.loss_history, marker='o')
+    plt.plot(rounds, strategy.loss_history, marker='o', label='Loss (MSE)')
     plt.title('Global Model Loss over Rounds')
     plt.xlabel('Round')
     plt.ylabel('Loss (MSE)')
     plt.grid(True)
+    plt.legend()
     plt.savefig('results/loss_over_rounds.png')
     plt.show()
 
-    # If metrics like MAE and R² are available
+    # Plot Validation MAE
     if strategy.metrics_history and 'mae' in strategy.metrics_history[0]:
         mae_history = [m['mae'] for m in strategy.metrics_history]
         plt.figure(figsize=(10, 5))
-        plt.plot(rounds, mae_history, marker='o', color='orange')
-        plt.title('Global Model MAE over Rounds')
+        plt.plot(rounds, mae_history, marker='o', color='orange', label='Mean Absolute Error (MAE)')
+        plt.title('Global Model Validation MAE over Rounds')
         plt.xlabel('Round')
-        plt.ylabel('Mean Absolute Error')
+        plt.ylabel('MAE')
         plt.grid(True)
+        plt.legend()
         plt.savefig('results/mae_over_rounds.png')
         plt.show()
 
+    # Plot Validation R² Score
     if strategy.metrics_history and 'r2' in strategy.metrics_history[0]:
         r2_history = [m['r2'] for m in strategy.metrics_history]
         plt.figure(figsize=(10, 5))
-        plt.plot(rounds, r2_history, marker='o', color='green')
-        plt.title('Global Model R² Score over Rounds')
+        plt.plot(rounds, r2_history, marker='o', color='green', label='R² Score')
+        plt.title('Global Model Validation R² Score over Rounds')
         plt.xlabel('Round')
         plt.ylabel('R² Score')
         plt.grid(True)
+        plt.legend()
         plt.savefig('results/r2_over_rounds.png')
         plt.show()
 
-    if strategy.fit_metrics_history and 'val_mse' in strategy.fit_metrics_history[0]:
-        val_mse_history = [m['val_mse'] for m in strategy.fit_metrics_history]
+    # Plot Validation Accuracy
+    if hasattr(strategy, 'accuracy_history') and strategy.accuracy_history:
+        accuracy_history = strategy.accuracy_history
         plt.figure(figsize=(10, 5))
-        plt.plot(rounds, val_mse_history, marker='o', color='purple')
-        plt.title('Global Model Validation MSE over Rounds')
+        plt.plot(rounds, accuracy_history, marker='o', color='blue', label=f'Accuracy (±{TOLERANCE*100}%)')
+        plt.title(f'Global Model Validation Accuracy (±{TOLERANCE*100}%) over Rounds')
         plt.xlabel('Round')
-        plt.ylabel('Validation MSE')
+        plt.ylabel(f'Accuracy (Proportion within ±{TOLERANCE*100}%)')
         plt.grid(True)
-        plt.savefig('results/val_mse_over_rounds.png')
+        plt.legend()
+        plt.savefig('results/accuracy_over_rounds.png')
         plt.show()

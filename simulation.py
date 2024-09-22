@@ -2,19 +2,21 @@
 import flwr as fl
 import torch
 import matplotlib.pyplot as plt
-from server import weighted_average, CustomFedAvg
-from client import FlowerClient
-from client import set_random_seeds
-from client import load_data_for_client
-from client import MLP
-from client import LinearRegressionModel
+import os
 
-# Server Config
+from server import weighted_average, CustomFedAvg, TOLERANCE
+from client import FlowerClient, set_random_seeds, load_data_for_client, MLP, LinearRegressionModel
+
+# Ensure the 'results' directory exists
+os.makedirs('results', exist_ok=True)
+
+# Server Configurations
 num_clients_1 = 3
 num_clients_2 = 5
 num_rounds = 70
-details = str(num_rounds) + 'rounds_'
+details = f"{num_rounds}rounds_"
 
+# Instantiate custom strategies
 strategy_1 = CustomFedAvg(
     fraction_fit=1.0,  # Sample 100% of available clients for training
     fraction_evaluate=1.0,  # Sample 100% of available clients for evaluation
@@ -57,65 +59,68 @@ def client_fn_2(cid: str):
     train_loader, val_loader, test_loader, input_dim = load_data_for_client(cid_int, num_clients_2)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = MLP(input_dim).to(device)
-    return FlowerClient(model, train_loader, val_loader, test_loader, device, cid_int).to_client()
+    client = FlowerClient(model, train_loader, val_loader, test_loader, device, cid_int)
+    return client
 
-# Start Flower server
-if __name__ == "__main__":
-    # Start the server
+# Function to run simulation with a given strategy and number of clients
+def run_simulation(client_fn, num_clients, strategy, num_rounds, strategy_name):
+    print(f"Starting simulation: {strategy_name} with {num_clients} clients for {num_rounds} rounds.")
     hist = fl.simulation.start_simulation(
+        client_fn=lambda cid: client_fn(str(cid)),
+        num_clients=num_clients,
+        config=fl.server.ServerConfig(num_rounds=num_rounds),
+        strategy=strategy,
+    )
+    print(f"Simulation {strategy_name} completed.")
+    return hist
+
+# Start Flower server simulations
+if __name__ == "__main__":
+    # Run simulation for strategy 1
+    hist_1 = run_simulation(
         client_fn=client_fn_1,
         num_clients=num_clients_1,
-        config=fl.server.ServerConfig(num_rounds=num_rounds),
         strategy=strategy_1,
+        num_rounds=num_rounds,
+        strategy_name="Strategy 1"
     )
 
-    hist = fl.simulation.start_simulation(
+    # Run simulation for strategy 2
+    hist_2 = run_simulation(
         client_fn=client_fn_2,
         num_clients=num_clients_2,
-        config=fl.server.ServerConfig(num_rounds=num_rounds),
         strategy=strategy_2,
+        num_rounds=num_rounds,
+        strategy_name="Strategy 2"
     )
 
     # Define the number of rounds to exclude
     exclude_rounds = 0  # Number of initial rounds to exclude
 
     # Ensure there are enough rounds to exclude
-    if len(strategy_1.loss_history) <= exclude_rounds:
+    if len(strategy_1.loss_history) <= exclude_rounds or len(strategy_2.loss_history) <= exclude_rounds:
         raise ValueError(f"Not enough rounds to exclude the first {exclude_rounds} rounds.")
 
-    # Define the rounds and corresponding loss/history excluding the first two rounds
+    # Define the rounds and corresponding loss/history excluding the first few rounds
     rounds_1 = range(exclude_rounds + 1, len(strategy_1.loss_history) + 1)
     loss_history_1 = strategy_1.loss_history[exclude_rounds:]
+    accuracy_history_1 = strategy_1.accuracy_history[exclude_rounds:]
+
     rounds_2 = range(exclude_rounds + 1, len(strategy_2.loss_history) + 1)
     loss_history_2 = strategy_2.loss_history[exclude_rounds:]
-    
+    accuracy_history_2 = strategy_2.accuracy_history[exclude_rounds:]
+
     # Plot Loss
     plt.figure(figsize=(10, 5))
-    plt.plot(rounds_1, loss_history_1, marker='o', label='10 Clients')
-    plt.plot(rounds_2, loss_history_2, marker='o', label='20 Clients')
+    plt.plot(rounds_1, loss_history_1, marker='o', label=f'{num_clients_1} Clients')
+    plt.plot(rounds_2, loss_history_2, marker='o', label=f'{num_clients_2} Clients')
     plt.title('Global Model Loss over Rounds')
     plt.xlabel('Round')
     plt.ylabel('Loss (MSE)')
     plt.grid(True)
     plt.legend()
-    plt.savefig('results/' + details + 'loss_over_rounds.png')
+    plt.savefig(f'results/{details}loss_over_rounds.png')
     plt.show()
-
-    if strategy_1.metrics_history and 'accuracy' in strategy_1.metrics_history[0]:
-        accuracy_history_1 = [m['accuracy'] for m in strategy_1.metrics_history]
-        accuracy_history_1 = accuracy_history_1[exclude_rounds:]
-        accuracy_history_2 = [m['accuracy'] for m in strategy_2.metrics_history]
-        accuracy_history = accuracy_history_1[exclude_rounds:]
-        plt.figure(figsize=(10, 5))
-        plt.plot(rounds_1, accuracy_history_1, marker='o', color='orange', label='10 Clients')
-        plt.plot(rounds_2, accuracy_history_2, marker='o', color='indigo', label='20 Clients')
-        plt.title('Accuracy over Rounds')
-        plt.xlabel('Round')
-        plt.ylabel('Accuracy')
-        plt.grid(True)
-        plt.legend()
-        plt.savefig('results/' + details + 'accuracy_over_rounds.png')
-        plt.show()
 
     # Plot Validation MAE
     if strategy_1.metrics_history and 'mae' in strategy_1.metrics_history[0]:
@@ -124,14 +129,14 @@ if __name__ == "__main__":
         mae_history_2 = [m['mae'] for m in strategy_2.metrics_history]
         mae_history_2 = mae_history_2[exclude_rounds:]
         plt.figure(figsize=(10, 5))
-        plt.plot(rounds_1, mae_history_1, marker='o', color='orange', label='10 Clients')
-        plt.plot(rounds_2, mae_history_2, marker='o', color='indigo', label='20 Clients')
+        plt.plot(rounds_1, mae_history_1, marker='o', color='orange', label=f'{num_clients_1} Clients')
+        plt.plot(rounds_2, mae_history_2, marker='o', color='indigo', label=f'{num_clients_2} Clients')
         plt.title('Global Model Validation MAE over Rounds')
         plt.xlabel('Round')
         plt.ylabel('Mean Absolute Error')
         plt.grid(True)
         plt.legend()
-        plt.savefig('results/' + details + 'mae_over_rounds.png')
+        plt.savefig(f'results/{details}mae_over_rounds.png')
         plt.show()
 
     # Plot Validation R² Score
@@ -141,26 +146,25 @@ if __name__ == "__main__":
         r2_history_2 = [m['r2'] for m in strategy_2.metrics_history]
         r2_history_2 = r2_history_2[exclude_rounds:]
         plt.figure(figsize=(10, 5))
-        plt.plot(rounds_1, r2_history_1, marker='o', color='green', label='10 Clients')
-        plt.plot(rounds_2, r2_history_2, marker='o', color='red', label='20 Clients')
+        plt.plot(rounds_1, r2_history_1, marker='o', color='green', label=f'{num_clients_1} Clients')
+        plt.plot(rounds_2, r2_history_2, marker='o', color='red', label=f'{num_clients_2} Clients')
         plt.title('Global Model Validation R² Score over Rounds')
         plt.xlabel('Round')
         plt.ylabel('R² Score')
         plt.grid(True)
         plt.legend()
-        plt.savefig('results/' + details + 'r2_over_rounds.png')
+        plt.savefig(f'results/{details}r2_over_rounds.png')
         plt.show()
 
-    # # Plot Validation MSE (from fit_metrics_history)
-    # if strategy.fit_metrics_history and 'val_mse' in strategy.fit_metrics_history[0]:
-    #     val_mse_history = [m['val_mse'] for m in strategy.fit_metrics_history]
-    #     val_mse_history = val_mse_history[exclude_rounds:]
-    #     plt.figure(figsize=(10, 5))
-    #     plt.plot(rounds, val_mse_history, marker='o', color='purple', label='Validation MSE')
-    #     plt.title('Global Model Validation MSE over Rounds')
-    #     plt.xlabel('Round')
-    #     plt.ylabel('Validation MSE')
-    #     plt.grid(True)
-    #     plt.legend()
-    #     plt.savefig('results/' + details + 'val_mse_over_rounds.png')
-    #     plt.show()
+    # Plot Validation Accuracy
+    if strategy_1.accuracy_history and strategy_2.accuracy_history:
+        plt.figure(figsize=(10, 5))
+        plt.plot(rounds_1, accuracy_history_1, marker='o', color='blue', label=f'{num_clients_1} Clients')
+        plt.plot(rounds_2, accuracy_history_2, marker='o', color='cyan', label=f'{num_clients_2} Clients')
+        plt.title(f'Global Model Validation Accuracy (±{TOLERANCE*100}%) over Rounds')
+        plt.xlabel('Round')
+        plt.ylabel(f'Accuracy (Proportion within ±{TOLERANCE*100}%)')
+        plt.grid(True)
+        plt.legend()
+        plt.savefig(f'results/{details}accuracy_over_rounds.png')
+        plt.show()

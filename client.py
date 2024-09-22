@@ -7,11 +7,16 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import random
+import os
 
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
 from sklearn.impute import SimpleImputer
 from sklearn.metrics import mean_squared_error, r2_score, mean_absolute_error
+
+# Define the tolerance for accuracy (percentage-based)
+TOLERANCE = 0.10  # 10% tolerance
+MIN_TOLERANCE = 1e-6  # Minimum tolerance to avoid zero
 
 # Function to set random seeds for reproducibility
 def set_random_seeds(seed_value=42):
@@ -90,12 +95,13 @@ class FlowerClient(fl.client.NumPyClient):
                 print(f"Client {self.client_id} - Epoch {epoch+1}/{self.num_epochs} - Training loss: {avg_epoch_loss:.4f}")
         
         # After training, compute validation metrics
-        val_mse, val_mae, val_r2 = self.evaluate_metrics(self.val_loader)
-        # Return the updated model parameters
+        val_mse, val_mae, val_r2, val_accuracy = self.evaluate_metrics(self.val_loader)
+        # Return the updated model parameters and metrics
         return self.get_parameters(config={}), len(self.train_loader.dataset), {
             "val_mse": val_mse,
             "val_mae": val_mae,
-            "val_r2": val_r2
+            "val_r2": val_r2,
+            "val_accuracy": val_accuracy  # Include accuracy
         }
 
     def evaluate_metrics(self, data_loader):
@@ -103,6 +109,8 @@ class FlowerClient(fl.client.NumPyClient):
         total_loss = 0.0
         all_outputs = []
         all_targets = []
+        correct_predictions = 0
+        total_predictions = 0
         with torch.no_grad():
             for batch_x, batch_y in data_loader:
                 batch_x, batch_y = batch_x.to(self.device), batch_y.to(self.device)
@@ -111,41 +119,33 @@ class FlowerClient(fl.client.NumPyClient):
                 total_loss += loss.item() * batch_x.size(0)
                 all_outputs.extend(outputs.cpu().numpy().flatten())
                 all_targets.extend(batch_y.cpu().numpy().flatten())
+                # Calculate custom accuracy based on percentage tolerance
+                abs_errors = torch.abs(outputs - batch_y)
+                tolerance_thresholds = TOLERANCE * torch.abs(batch_y)
+                # Ensure minimum tolerance
+                tolerance_thresholds = torch.clamp(tolerance_thresholds, min=MIN_TOLERANCE)
+                correct_predictions += (abs_errors <= tolerance_thresholds).sum().item()
+                total_predictions += batch_y.size(0)
         mse = total_loss / len(data_loader.dataset)
         mae = mean_absolute_error(all_targets, all_outputs)
         r2 = r2_score(all_targets, all_outputs)
-        # Convert metrics to standard Python float
+        accuracy = correct_predictions / total_predictions  # Proportion of correct predictions
+        # Convert metrics to standard Python floats
         mse = float(mse)
         mae = float(mae)
         r2 = float(r2)
-        return mse, mae, r2
+        accuracy = float(accuracy)
+        return mse, mae, r2, accuracy
         
     def evaluate(self, parameters, config):
         self.set_parameters(parameters)
-        self.model.eval()
-        total_loss = 0.0
-        all_outputs = []
-        all_targets = []
-        with torch.no_grad():
-            for batch_x, batch_y in self.test_loader:
-                batch_x, batch_y = batch_x.to(self.device), batch_y.to(self.device)
-                outputs = self.model(batch_x)
-                loss = self.criterion(outputs, batch_y)
-                total_loss += loss.item() * batch_x.size(0)
-                all_outputs.extend(outputs.cpu().numpy().flatten())
-                all_targets.extend(batch_y.cpu().numpy().flatten())
-        mse = total_loss / len(self.test_loader.dataset)
-        mae = mean_absolute_error(all_targets, all_outputs)
-        r2 = r2_score(all_targets, all_outputs)
-        # Convert metrics to standard Python float
-        mse = float(mse)
-        mae = float(mae)
-        r2 = float(r2)
-        print(f"Client {self.client_id} - Evaluation MSE: {mse:.4f}, MAE: {mae:.4f}, R²: {r2:.4f}")
+        mse, mae, r2, accuracy = self.evaluate_metrics(self.test_loader)
+        print(f"Client {self.client_id} - Evaluation MSE: {mse:.4f}, MAE: {mae:.4f}, R²: {r2:.4f}, Accuracy: {accuracy:.4f}")
         return mse, len(self.test_loader.dataset), {
             "mse": mse,
             "mae": mae,
-            "r2": r2
+            "r2": r2,
+            "accuracy": accuracy  # Include accuracy
         }
 
 # Function to load partitioned data for each client
@@ -231,4 +231,4 @@ if __name__ == "__main__":
     client = FlowerClient(model, train_loader, val_loader, test_loader, device, client_index)
 
     # Start the Flower client
-    fl.client.start_client(server_address="0.0.0.0:8080", client=client.to_client())
+    fl.client.start_client(server_address="0.0.0.0:8080", client=client)
