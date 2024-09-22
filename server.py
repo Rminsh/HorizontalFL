@@ -23,18 +23,24 @@ def weighted_average(metrics):
 class CustomFedAvg(fl.server.strategy.FedAvg):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self.loss_history = []
-        self.metrics_history = []
-        self.fit_metrics_history = []
-        self.accuracy_history = []  # New list to store accuracy over rounds
+        self.loss_history = []  # Test loss from evaluate
+        self.metrics_history = []  # Test metrics from evaluate
+        self.fit_metrics_history = []  # Validation metrics from fit
+        self.train_loss_history = []  # Training loss from fit
+        self.train_accuracy_history = []  # Training accuracy from fit
+        self.val_accuracy_history = []  # Validation accuracy from fit
 
     def aggregate_fit(self, rnd, results, failures):
         aggregated_parameters, aggregated_fit_metrics = super().aggregate_fit(rnd, results, failures)
         if aggregated_fit_metrics:
             self.fit_metrics_history.append(aggregated_fit_metrics)
             print(f"Round {rnd} - Aggregated fit metrics: {aggregated_fit_metrics}")
+            if 'train_accuracy' in aggregated_fit_metrics:
+                self.train_accuracy_history.append(aggregated_fit_metrics['train_accuracy'])
+            if 'train_loss' in aggregated_fit_metrics:
+                self.train_loss_history.append(aggregated_fit_metrics['train_loss'])
             if 'val_accuracy' in aggregated_fit_metrics:
-                self.accuracy_history.append(aggregated_fit_metrics['val_accuracy'])
+                self.val_accuracy_history.append(aggregated_fit_metrics['val_accuracy'])
         return aggregated_parameters, aggregated_fit_metrics
 
     def aggregate_evaluate(self, rnd, results, failures):
@@ -45,7 +51,7 @@ class CustomFedAvg(fl.server.strategy.FedAvg):
         # Store the aggregated loss and metrics
         self.loss_history.append(loss_aggregated)
         self.metrics_history.append(metrics_aggregated)
-        print(f"Round {rnd} - Loss: {loss_aggregated:.4f}, Metrics: {metrics_aggregated}")
+        print(f"Round {rnd} - Test Loss: {loss_aggregated:.4f}, Test Metrics: {metrics_aggregated}")
         return loss_aggregated, metrics_aggregated
 
 # Ensure the 'results' directory exists
@@ -76,51 +82,116 @@ if __name__ == "__main__":
 
     # After training, plot the loss and metrics
     rounds = range(1, len(strategy.loss_history) + 1)
+
+    # Plot Training Accuracy over Rounds
+    if strategy.train_accuracy_history:
+        plt.figure(figsize=(10, 5))
+        plt.plot(rounds, strategy.train_accuracy_history, marker='o', color='magenta', label='Training Accuracy')
+        plt.title(f'Global Model Training Accuracy (±{TOLERANCE*100}%) over Rounds')
+        plt.xlabel('Round')
+        plt.ylabel(f'Training Accuracy (Proportion within ±{TOLERANCE*100}%)')
+        plt.grid(True)
+        plt.legend()
+        plt.savefig('results/training_accuracy_over_rounds.png')
+        plt.show()
+
+    # Plot Training Loss over Rounds
+    if strategy.train_loss_history:
+        plt.figure(figsize=(10, 5))
+        plt.plot(rounds, strategy.train_loss_history, marker='o', color='brown', label='Training Loss')
+        plt.title('Global Model Training Loss over Rounds')
+        plt.xlabel('Round')
+        plt.ylabel('Training Loss')
+        plt.grid(True)
+        plt.legend()
+        plt.savefig('results/training_loss_over_rounds.png')
+        plt.show()
+
+    # Plot Test Loss (MSE) over Rounds
     plt.figure(figsize=(10, 5))
-    plt.plot(rounds, strategy.loss_history, marker='o', label='Loss (MSE)')
-    plt.title('Global Model Loss over Rounds')
+    plt.plot(rounds, strategy.loss_history, marker='o', label='Test Loss (MSE)')
+    plt.title('Global Model Test Loss (MSE) over Rounds')
     plt.xlabel('Round')
-    plt.ylabel('Loss (MSE)')
+    plt.ylabel('Test Loss (MSE)')
     plt.grid(True)
     plt.legend()
-    plt.savefig('results/loss_over_rounds.png')
+    plt.savefig('results/test_loss_over_rounds.png')
     plt.show()
 
-    # Plot Validation MAE
+    # Plot Validation Loss (MSE) from Fit Metrics
+    if strategy.fit_metrics_history and 'val_mse' in strategy.fit_metrics_history[0]:
+        val_mse_history = [m['val_mse'] for m in strategy.fit_metrics_history]
+        plt.figure(figsize=(10, 5))
+        plt.plot(rounds, val_mse_history, marker='o', color='orange', label='Validation Loss (MSE)')
+        plt.title('Global Model Validation Loss (MSE) over Rounds')
+        plt.xlabel('Round')
+        plt.ylabel('Validation Loss (MSE)')
+        plt.grid(True)
+        plt.legend()
+        plt.savefig('results/validation_loss_over_rounds.png')
+        plt.show()
+
+    # Plot Test MAE over Rounds
     if strategy.metrics_history and 'mae' in strategy.metrics_history[0]:
         mae_history = [m['mae'] for m in strategy.metrics_history]
         plt.figure(figsize=(10, 5))
-        plt.plot(rounds, mae_history, marker='o', color='orange', label='Mean Absolute Error (MAE)')
-        plt.title('Global Model Validation MAE over Rounds')
+        plt.plot(rounds, mae_history, marker='o', color='green', label='Test MAE')
+        plt.title('Global Model Test MAE over Rounds')
         plt.xlabel('Round')
-        plt.ylabel('MAE')
+        plt.ylabel('Mean Absolute Error (MAE)')
         plt.grid(True)
         plt.legend()
-        plt.savefig('results/mae_over_rounds.png')
+        plt.savefig('results/test_mae_over_rounds.png')
         plt.show()
 
-    # Plot Validation R² Score
+    # Plot Test MSE over Rounds
+    if strategy.metrics_history and 'mse' in strategy.metrics_history[0]:
+        mse_history = [m['mse'] for m in strategy.metrics_history]
+        plt.figure(figsize=(10, 5))
+        plt.plot(rounds, mse_history, marker='o', color='red', label='Test MSE')
+        plt.title('Global Model Test MSE over Rounds')
+        plt.xlabel('Round')
+        plt.ylabel('Mean Squared Error (MSE)')
+        plt.grid(True)
+        plt.legend()
+        plt.savefig('results/test_mse_over_rounds.png')
+        plt.show()
+
+    # Plot Test R² Score over Rounds
     if strategy.metrics_history and 'r2' in strategy.metrics_history[0]:
         r2_history = [m['r2'] for m in strategy.metrics_history]
         plt.figure(figsize=(10, 5))
-        plt.plot(rounds, r2_history, marker='o', color='green', label='R² Score')
-        plt.title('Global Model Validation R² Score over Rounds')
+        plt.plot(rounds, r2_history, marker='o', color='purple', label='Test R² Score')
+        plt.title('Global Model Test R² Score over Rounds')
         plt.xlabel('Round')
         plt.ylabel('R² Score')
         plt.grid(True)
         plt.legend()
-        plt.savefig('results/r2_over_rounds.png')
+        plt.savefig('results/test_r2_over_rounds.png')
         plt.show()
 
-    # Plot Validation Accuracy
-    if hasattr(strategy, 'accuracy_history') and strategy.accuracy_history:
-        accuracy_history = strategy.accuracy_history
+    # Plot Validation Accuracy over Rounds
+    if strategy.fit_metrics_history and 'val_accuracy' in strategy.fit_metrics_history[0]:
+        val_accuracy_history = [m['val_accuracy'] for m in strategy.fit_metrics_history]
         plt.figure(figsize=(10, 5))
-        plt.plot(rounds, accuracy_history, marker='o', color='blue', label=f'Accuracy (±{TOLERANCE*100}%)')
+        plt.plot(rounds, val_accuracy_history, marker='o', color='blue', label=f'Validation Accuracy (±{TOLERANCE*100}%)')
         plt.title(f'Global Model Validation Accuracy (±{TOLERANCE*100}%) over Rounds')
         plt.xlabel('Round')
-        plt.ylabel(f'Accuracy (Proportion within ±{TOLERANCE*100}%)')
+        plt.ylabel(f'Validation Accuracy (Proportion within ±{TOLERANCE*100}%)')
         plt.grid(True)
         plt.legend()
-        plt.savefig('results/accuracy_over_rounds.png')
+        plt.savefig('results/validation_accuracy_over_rounds.png')
+        plt.show()
+
+    # Plot Test Accuracy over Rounds
+    if strategy.metrics_history and 'accuracy' in strategy.metrics_history[0]:
+        test_accuracy_history = [m['accuracy'] for m in strategy.metrics_history]
+        plt.figure(figsize=(10, 5))
+        plt.plot(rounds, test_accuracy_history, marker='o', color='cyan', label=f'Test Accuracy (±{TOLERANCE*100}%)')
+        plt.title(f'Global Model Test Accuracy (±{TOLERANCE*100}%) over Rounds')
+        plt.xlabel('Round')
+        plt.ylabel(f'Test Accuracy (Proportion within ±{TOLERANCE*100}%)')
+        plt.grid(True)
+        plt.legend()
+        plt.savefig('results/test_accuracy_over_rounds.png')
         plt.show()

@@ -78,6 +78,9 @@ class FlowerClient(fl.client.NumPyClient):
     def fit(self, parameters, config):
         self.set_parameters(parameters)
         self.model.train()
+        total_train_loss = 0.0
+        correct_predictions = 0
+        total_predictions = 0
         for epoch in range(self.num_epochs):
             epoch_loss = 0.0
             for batch_x, batch_y in self.train_loader:
@@ -90,14 +93,30 @@ class FlowerClient(fl.client.NumPyClient):
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
                 self.optimizer.step()
                 epoch_loss += loss.item() * batch_x.size(0)
+                
+                # Calculate custom accuracy based on percentage tolerance
+                abs_errors = torch.abs(outputs - batch_y)
+                tolerance_thresholds = TOLERANCE * torch.abs(batch_y)
+                # Ensure minimum tolerance
+                tolerance_thresholds = torch.clamp(tolerance_thresholds, min=MIN_TOLERANCE)
+                correct_predictions += (abs_errors <= tolerance_thresholds).sum().item()
+                total_predictions += batch_y.size(0)
+
+            total_train_loss += epoch_loss
             avg_epoch_loss = epoch_loss / len(self.train_loader.dataset)
             if (epoch + 1) % 10 == 0:
                 print(f"Client {self.client_id} - Epoch {epoch+1}/{self.num_epochs} - Training loss: {avg_epoch_loss:.4f}")
         
+        # Calculate average training loss and accuracy over all epochs
+        avg_train_loss = total_train_loss / (self.num_epochs * len(self.train_loader.dataset))
+        train_accuracy = correct_predictions / total_predictions  # Proportion of correct predictions
+
         # After training, compute validation metrics
         val_mse, val_mae, val_r2, val_accuracy = self.evaluate_metrics(self.val_loader)
         # Return the updated model parameters and metrics
         return self.get_parameters(config={}), len(self.train_loader.dataset), {
+            "train_loss": avg_train_loss,
+            "train_accuracy": train_accuracy,
             "val_mse": val_mse,
             "val_mae": val_mae,
             "val_r2": val_r2,
@@ -224,8 +243,17 @@ if __name__ == "__main__":
     # Initialize the model
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     
+    # Uncomment one of the following lines to choose the model
     # model = LinearRegressionModel(input_dim).to(device)
     model = MLP(input_dim).to(device)
+
+    # Initialize weights (optional for some models)
+    def init_weights(m):
+        if isinstance(m, nn.Linear):
+            nn.init.xavier_uniform_(m.weight)
+            if m.bias is not None:
+                nn.init.zeros_(m.bias)
+    model.apply(init_weights)
 
     # Create a Flower client
     client = FlowerClient(model, train_loader, val_loader, test_loader, device, client_index)
